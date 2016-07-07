@@ -34,14 +34,14 @@ namespace dart{
 template <typename DepthType, typename ColorType>
 class K2DepthSource : public DepthSource<DepthType, ColorType> {
 public:
-    K2DepthSource;
-    ~K2DepthSource;
+    K2DepthSource();
+    ~K2DepthSource();
     
     bool initialize(
             const float2 focalLength,
             const float2 principalPoint = make_float2(0,0),
-            const uint depthWidth = 0,
-            const uint depthHeight = 0,
+            const uint depthWidth = 512,
+            const uint depthHeight = 424,
             const float scaleToMeters = 1.f);
     
 #ifdef CUDA_BUILD
@@ -58,7 +58,7 @@ public:
     
     void advance();
     
-    bool has RadialDistortionParams() const { return false; }
+    bool hasRadialDistortionParams() const { return false; }
     
     float getScaleToMeters() const { return _scaleToMeters; }
 
@@ -76,7 +76,7 @@ private:
     float _scaleToMeters;
     std::vector<ulong> _depthTimes;
     libfreenect2::Freenect2 _freenect2;
-    libfreenect2::PacketPipeline * _packepipeline;
+    libfreenect2::PacketPipeline * _pipeline;
     libfreenect2::Freenect2Device * _device;
     libfreenect2::SyncMultiFrameListener * _listener;
     bool _initialized;
@@ -84,23 +84,30 @@ private:
 
 // Implementation
 template <typename DepthType, typename ColorType>
-K2DepthSource<DepthType,ColorType>::PangoDepthSource() :
+K2DepthSource<DepthType,ColorType>::K2DepthSource() :
     DepthSource<DepthType, ColorType>(),
     _firstDepthFrame(0),
     _depthData(0) {}
 
 template <typename DepthType, typename ColorType>
-K2DepthSource<DepthType, ColorType>::~PangoDepthSoruce() {
+K2DepthSource<DepthType, ColorType>::~K2DepthSource() {
 #ifdef CUDA_BUILD
     delete _depthData;
 #else
     delete [] _depthData;
 #endif
+    
+    _device->stop();
+    _device->close();
+    
+    // crashy crash?
+    //delete _pipeline;
+    //delete _listener;
+    //delete _device;
 }
 
 template <typename DepthType, typename ColorType>
 bool K2DepthSource<DepthType, ColorType>::initialize(
-        const std::string & pangoFilename,
         const float2 focalLength,
         const float2 principalPoint,
         const uint depthWidth,
@@ -109,13 +116,22 @@ bool K2DepthSource<DepthType, ColorType>::initialize(
     
     this->_frame = 0;
     this->_focalLength = focalLength;
+    this->_depthWidth = depthWidth;
+    this->_depthHeight = depthHeight;
+    if(principalPoint.x == 0){
+        this->_principalPoint = make_float2(
+                this->_depthWidth/2, this->_depthHeight/2);
+    }
+    else{
+        this->_principalPoint = principalPoint;
+    }
     _scaleToMeters = scaleToMeters;
         
     int nDevices = _freenect2.enumerateDevices();
     std::cout << "found " << nDevices << " devices" << std::endl;
     for(int i = 0; i < nDevices; ++i){
         std::cout << "device " << i << " has serial number "
-                << _freenect2.getDeviceSerialNumber(i) << std::end;
+                << _freenect2.getDeviceSerialNumber(i) << std::endl;
     }
     
     if(nDevices == 0){
@@ -129,32 +145,71 @@ bool K2DepthSource<DepthType, ColorType>::initialize(
     _pipeline = new libfreenect2::OpenCLPacketPipeline();
     _device = _freenect2.openDevice(0, _pipeline);
     
-    if(device == NULL){
+    if(_device == NULL){
         std::cerr << "could not open device" << std::endl;
         _initialized = false;
         return false;
     }
     
     std::cout << "opened device has serial number "
-            << device->getSerialNumber() << std::endl;
+            << _device->getSerialNumber() << std::endl;
     
-    std::cout << "and firmware version " << device->getFirmwareVersion()
+    std::cout << "and firmware version " << _device->getFirmwareVersion()
             << std::endl;
     
-    device->start();
-    
     _initialized = true;
+    
+    printf("INITIALIZING TO SIZE %i\n",
+            this->_depthWidth * this->_depthHeight);
+#ifdef CUDA_BUILD
+    _depthData = new MirroredVector<DepthType>(
+            this->_depthWidth * this->_depthHeight);
+#else
+    _depthData = new DepthType[this->_depthWidth*this->_depthHeight];
+#endif
+    
+    _listener = new libfreenect2::SyncMultiFrameListener(
+            libfreenect2::Frame::Depth | libfreenect2::Frame::Color);
+    _device->setColorFrameListener(_listener);
+    _device->setIrAndDepthFrameListener(_listener);
+    _device->start();
+    
     return true;
 }
 
 template <typename DepthType, typename ColorType>
-void K2DepthSource<DepthType, ColorType>::setFrame(const uint frame){}
+void K2DepthSource<DepthType, ColorType>::setFrame(const uint frame){
+    readDepth();
+}
 
 template <typename DepthType, typename ColorType>
-void K2DepthSource<DepthType, ColorType>::advance() {}
+void K2DepthSource<DepthType, ColorType>::advance() {
+    readDepth();
+}
 
 template <typename DepthType, typename ColorType>
 void K2DepthSource<DepthType, ColorType>::readDepth() {
     libfreenect2::FrameMap frameMap;
-    _listener... << CONTINUE HERE
+    //if(_listener.hasNewFrame()){
+    //    libfreenect2::FrameMap frameMap;
+    //    _listener
+    //}
+    printf("A\n");
+    _listener->waitForNewFrame(frameMap);
+    printf("B\n");
+    libfreenect2::Frame * depthFrame = frameMap[libfreenect2::Frame::Depth];
+    std::cout << "depth@ " << (depthFrame->timestamp) << std::endl;
+    
+    cudaMemcpy(
+            _depthData->devicePtr(),
+            depthFrame->data,
+            this->_depthWidth * this->_depthHeight * sizeof(DepthType),
+            cudaMemcpyHostToDevice);
+    
+    _depthData->syncDeviceToHost();
+    _listener->release(frameMap);
 }
+
+};
+
+#endif
