@@ -20,6 +20,7 @@ find_package(GLUT REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(DEPTHSENSE)
 find_package(OpenNI2)
+find_package(freenect2)
 
 # find packages with pkg-config
 find_package(PkgConfig)
@@ -172,6 +173,15 @@ set(depth_source_src
 )
 
 # set conditional sources
+if(freenect2_FOUND)
+    include_directories(${freenect2_INCLUDE_DIRS})
+    link_libraries(${freenect2_LIBRARY})
+    set(depth_source_src
+        ${depth_source_src}
+        ${PROJECT_SOURCE_DIR}/src/depth_sources/k2_depth_source.h
+    )
+endif()
+
 if(OPENNI2_FOUND)
     include_directories(${OPENNI2_INCLUDE_DIRS})
     link_directories(${OPENNI2_REDIST_DIR})
