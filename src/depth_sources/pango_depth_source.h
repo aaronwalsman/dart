@@ -166,7 +166,7 @@ template <typename DepthType, typename ColorType>
 void PangoDepthSource<DepthType,ColorType>::advance() {
     pangolin::VideoPlaybackInterface * playback =
             _video.Cast<pangolin::VideoPlaybackInterface>();
-    if(this->_frame == playback->GetTotalFrames()){
+    if(this->_frame == playback->GetTotalFrames()-1){
     //if(this->_frame == 90){
         playback->Seek(0);
     }
